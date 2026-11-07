@@ -1,4 +1,4 @@
-﻿{
+{
   "name": "a2z-handoff",
   "version": "0.1.0",
   "description": "A model-agnostic handoff protocol and CLI for orchestrating AI coding agents.",
@@ -25,5 +25,13 @@
     "dsh"
   ],
   "author": "Reza",
-  "license": "MIT"
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/RezaAstaraki/a2z-handoff.git"
+  },
+  "homepage": "https://github.com/RezaAstaraki/a2z-handoff#readme",
+  "bugs": {
+    "url": "https://github.com/RezaAstaraki/a2z-handoff/issues"
+  }
 }
