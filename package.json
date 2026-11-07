@@ -1,0 +1,29 @@
+﻿{
+  "name": "a2z-handoff",
+  "version": "0.1.0",
+  "description": "A model-agnostic handoff protocol and CLI for orchestrating AI coding agents.",
+  "type": "module",
+  "bin": {
+    "a2z-handoff": "./bin/a2z-handoff.js"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "files": [
+    "bin",
+    "src",
+    "LEADER.md"
+  ],
+  "keywords": [
+    "ai",
+    "agent",
+    "handoff",
+    "leader",
+    "worker",
+    "orchestrator",
+    "chatgpt",
+    "dsh"
+  ],
+  "author": "Reza",
+  "license": "MIT"
+}
