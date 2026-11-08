@@ -28,7 +28,16 @@ export async function runInit() {
     else if (deps.react) { defaultStack = "React"; defaultVerify = "npx tsc --noEmit"; }
     else if (deps.typescript) { defaultStack = "TypeScript"; defaultVerify = "npx tsc --noEmit"; }
     else if (deps.express) { defaultStack = "Express"; }
-  } catch {}
+  } catch {
+    // Check for Python
+    try {
+      await access(path.join(cwd, "pyvenv.cfg"));
+      defaultStack = "Python";
+      defaultVerify = "python -m compileall .";
+    } catch {
+      // Not Python either
+    }
+  }
 
   try {
     console.log("Initializing a2z-handoff for this project...\n");
@@ -52,40 +61,32 @@ export async function runInit() {
 
     await mkdir(leaderDir, { recursive: true });
 
-    // SAFE WRITE for AGENTS.md
     const agentsPath = path.join(cwd, "AGENTS.md");
     try {
       await access(agentsPath);
-      // File exists! Append a2z rules.
       await writeFile(agentsPath, "\n\n" + fill(AGENTS_TEMPLATE), { flag: "a" });
       console.log("  - Appended a2z rules to existing AGENTS.md");
     } catch {
-      // File doesn't exist. Create new.
       await writeFile(agentsPath, fill(AGENTS_TEMPLATE), "utf8");
       console.log("  - Created new AGENTS.md");
     }
 
-    // SAFE WRITE for HANDOFF.md
     const handoffPath = path.join(cwd, "HANDOFF.md");
     try {
       await access(handoffPath);
-      // File exists, skip or leave alone. Let's leave alone to preserve state.
       console.log("  - Existing HANDOFF.md detected (skipped)");
     } catch {
       await writeFile(handoffPath, fill(HANDOFF_TEMPLATE), "utf8");
       console.log("  - Created HANDOFF.md");
     }
 
-    // Always overwrite CHAT_CONTEXT and .leader files (they are generated)
     await writeFile(path.join(cwd, "CHAT_CONTEXT.md"), fill(CHAT_CONTEXT_TEMPLATE), "utf8");
     await writeFile(path.join(leaderDir, "LEADER.md"), fill(LEADER_TEMPLATE), "utf8");
     await writeFile(path.join(leaderDir, "PROJECT.md"), fill(PROJECT_TEMPLATE), "utf8");
     
-    // SAFE WRITE for NOTES.md
     const notesPath = path.join(leaderDir, "NOTES.md");
     try {
       await access(notesPath);
-      // File exists, skip.
     } catch {
       await writeFile(notesPath, fill(NOTES_TEMPLATE), "utf8");
     }

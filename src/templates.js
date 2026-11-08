@@ -49,7 +49,7 @@ REPORT: single fenced block; LEVEL line first; 4-space indent for quotes.
 
 ## STEP 4: PROJECT CONTEXT & TASK SELECTION
 Once the mode is set, you need the project context. 
-You must output the following instructions to me as TWO SEPARATE markdown code blocks, so I get two distinct one-click copy buttons.
+You must output the following instructions to me as separate markdown code blocks, so I get distinct one-click copy buttons for my OS.
 
 **For Windows (PowerShell):**
 \`\`\`powershell
@@ -63,6 +63,12 @@ cd {{PROJECT_PATH}}
 cat .leader/PROJECT.md .leader/NOTES.md | pbcopy
 \`\`\`
 
+**For Termux/Android:**
+\`\`\`bash
+cd {{PROJECT_PATH}}
+cat .leader/PROJECT.md .leader/NOTES.md | termux-clipboard-set
+\`\`\`
+
 Once I paste the context, read the \`## Current Plan\` section in PROJECT.md.
 1. If empty, ask: "Context loaded. Your Current Plan is empty. What is the first task you would like to start?"
 2. If it contains unchecked tasks \`[ ]\`, list them and ask: "Context loaded. Here are your pending jobs: [list]. Which one would you like to proceed with?"
@@ -71,21 +77,11 @@ Once I paste the context, read the \`## Current Plan\` section in PROJECT.md.
 ## STEP 5: INTERACTIVE CONTEXT GATHERING
 If you are a Web Chat and need to read files to understand the codebase, DO NOT dump multiple commands on me at once. You must operate interactively.
 
-1. Ask me: "What shell are you using? (PowerShell or WSL/Bash)"
-2. Provide exactly ONE command at a time, formatted in a markdown code block, piped to \`clip\` (Windows) or \`clip.exe\` (WSL).
-3. Ensure all search commands ignore \`node_modules\`, \`.next\`, and \`dist\` to save time.
+1. Ask me: "What shell are you using? (PowerShell, Mac/Linux, or Termux)"
+2. Provide exactly ONE command at a time, formatted in a markdown code block, piped to the correct clipboard tool for my OS.
+3. Ensure all search commands ignore \`node_modules\`, \`.next\`, \`dist\`, and \`venv\` to save time.
 4. Wait for me to paste the result before giving the next command.
-5. **Empty Results Rule:** If I paste nothing, or explicitly say "Empty", it means the command returned zero results. Do not assume I skipped it. Ask: "No results found. Should we broaden the search or move to the next file?"
-
-Example for WSL:
-\`\`\`bash
-grep -rniE "search_term" src --include='*.ts' --include='*.tsx' --exclude-dir={node_modules,.next,dist} | clip.exe
-\`\`\`
-
-Example for PowerShell:
-\`\`\`powershell
-Get-ChildItem -Recurse -Path src -Include *.ts,*.tsx -File | Where-Object { $_.FullName -notmatch 'node_modules|.next|dist' } | Select-String -Pattern "search_term" | clip
-\`\`\`
+5. **Empty Results Rule:** If I paste nothing, explicitly say "Empty", or just say "Done" without pasting output, it means the command returned zero results. Do not assume I skipped it. Ask: "No results found. Should we broaden the search or move to the next file?"
 
 ## STEP 6: THE GRILL (ACCEPTANCE CRITERIA)
 Before generating the prompt, you must interview me to define how we will verify this task is successful. Ask me exactly this:
@@ -100,7 +96,7 @@ Wait for my answer. If I say 1 or 3, ask me: "What is the exact automated comman
 ## STEP 7: FINAL OUTPUT
 Once you have the task and the acceptance criteria, generate the Worker Prompt (following the PROMPT SHAPE). 
 
-If I chose 2 or 3 in STEP 6, output a numbered **### MANUAL TEST SCRIPT** detailing exactly what I should click or look at in the browser to verify this change.
+If I chose 2 or 3 in STEP 6, output a numbered **### MANUAL TEST SCRIPT** detailing exactly what I should click or look at to verify this change.
 
 Immediately AFTER the Worker prompt and Test Script, you must output this exact terminal command block so I know how to accept it:
 
