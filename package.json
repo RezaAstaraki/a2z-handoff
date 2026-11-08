@@ -1,6 +1,6 @@
 {
   "name": "a2z-handoff",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "A model-agnostic handoff protocol and CLI for orchestrating AI coding agents.",
   "type": "module",
   "bin": {
