@@ -41,12 +41,22 @@ export async function runInit(args = []) {
   let osName = "Windows PowerShell";
   let shellType = "powershell";
   let clipCmd = "| Set-Clipboard";
-  let contextCmd = "Get-Content .leader/PROJECT.md, .leader/NOTES.md | clip";
+  let contextCmd = "Get-Content .leader/PROJECT.md, .leader/NOTES.md -Encoding UTF8 | Set-Clipboard";
 
   if (platform === "darwin") {
     osName = "macOS"; shellType = "bash"; clipCmd = "| pbcopy"; contextCmd = "cat .leader/PROJECT.md .leader/NOTES.md | pbcopy";
   } else if (platform === "linux") {
     osName = "Linux / Termux"; shellType = "bash"; clipCmd = "| termux-clipboard-set"; contextCmd = "cat .leader/PROJECT.md .leader/NOTES.md | termux-clipboard-set";
+  }
+
+  let templateToFill = LEADER_TEMPLATE;
+
+  if (isDryRun) {
+    // Replace Step 4 with a direct task prompt for Dry Run
+    templateToFill = templateToFill.replace(
+      /## STEP 4: PROJECT CONTEXT & TASK SELECTION[\s\S]*?(?=## STEP 5:)/,
+      `## STEP 4: PROJECT CONTEXT & TASK SELECTION\n**Dry Run Mode:** Context files do not exist yet. Do not ask for them.\nJust say: "What is the first task you would like to start?"\n\n`
+    );
   }
 
   const fill = (tpl) => tpl
@@ -60,7 +70,7 @@ export async function runInit(args = []) {
     .replaceAll("{{CONTEXT_CMD}}", contextCmd);
 
   if (isDryRun) {
-    const leaderContent = fill(LEADER_TEMPLATE);
+    const leaderContent = fill(templateToFill);
     try {
       if (platform === "win32") execSync("clip", { input: leaderContent });
       else if (platform === "darwin") execSync("pbcopy", { input: leaderContent });
@@ -68,7 +78,7 @@ export async function runInit(args = []) {
         try { execSync("termux-clipboard-set", { input: leaderContent }); }
         catch { execSync("xclip -selection clipboard", { input: leaderContent }); }
       }
-      console.log("Dry run: Copied LEADER.md to clipboard. No files were written.");
+      console.log("Dry run: Copied LEADER.md to clipboard (Context files skipped). No files were written.");
     } catch (e) {
       console.error("Dry run: Could not copy to clipboard.", e.message);
     }
@@ -156,4 +166,3 @@ export async function runInit(args = []) {
     rl.close();
   }
 }
-
