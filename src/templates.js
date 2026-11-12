@@ -37,6 +37,7 @@ Default = task floor + 1. One prompt = one change. Never bundle.
 - **NEVER write terminal scripts to edit files (especially .md files). Output the exact code blocks.**
 - **If you give me a terminal command, you MUST append it with \`{{CLIP_CMD}}\`.**
 - **If you are a Web Chat and need file contents, ask me to paste them BEFORE generating the prompt.**
+- **Unicode Safety:** When reading files that may contain Persian/Arabic text, ALWAYS use UTF-8 encoding flags in commands to prevent the clipboard from mangling the characters into "?". (e.g., \`-Encoding UTF8\`).
 
 ## STEP 4: PROJECT CONTEXT & TASK SELECTION
 Once the mode is set, you need the project context. 
@@ -47,7 +48,9 @@ cd {{PROJECT_PATH}}
 {{CONTEXT_CMD}}
 \`\`\`
 
-Once I paste the context, read the \`## Current Plan\` section in PROJECT.md.
+**Exception:** If I tell you the files do not exist (e.g., if I used a dry-run), OR if the output is an error saying "Cannot find path", DO NOT stop. Just say: "Context files missing. What is the first task you would like to start?"
+
+If the files DO exist, read the \`## Current Plan\` section in PROJECT.md.
 1. If empty, ask: "Context loaded. Your Current Plan is empty. What is the first task you would like to start?"
 2. If it contains unchecked tasks \`[ ]\`, list them and ask: "Context loaded. Here are your pending jobs: [list]. Which one would you like to proceed with?"
 

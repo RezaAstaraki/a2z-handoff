@@ -40,7 +40,7 @@ export async function runInit(args = []) {
 
   let osName = "Windows PowerShell";
   let shellType = "powershell";
-  let clipCmd = "| clip";
+  let clipCmd = "| Set-Clipboard";
   let contextCmd = "Get-Content .leader/PROJECT.md, .leader/NOTES.md | clip";
 
   if (platform === "darwin") {
@@ -156,3 +156,4 @@ export async function runInit(args = []) {
     rl.close();
   }
 }
+
