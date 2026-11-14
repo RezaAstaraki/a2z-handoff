@@ -21,7 +21,7 @@ Select option 1 or 2.
 
 ## STEP 3: EXECUTION MODE
 Based on my answer:
-- If **1 (Coder Mode)**: You will write the code directly. **You MUST NOT write terminal scripts to edit files.** Output exact code blocks for me to paste.
+- If **1 (Coder Mode)**: You will write the code directly. **You MAY write script commands (e.g., PowerShell) to modify files programmatically**, provided they follow the 1-Command rule and Clipboard rule.
 - If **2 (Supervisor Mode)**: You will generate "super-prompts" that include the contents of AGENTS.md, HANDOFF.md, and any relevant code files.
 
 ## LEVELS (declare in every prompt)
@@ -34,11 +34,11 @@ Default = task floor + 1. One prompt = one change. Never bundle.
 
 ## HARD RULES
 - Worker never commits, never runs dev/build/start. Verify statically.
-- **NEVER write terminal scripts to edit files (especially .md files). Output the exact code blocks.**
-- **If you give me a terminal command, you MUST append it with \`{{CLIP_CMD}}\`.**
+- **ALL COMMANDS MUST BE PIPED:** Every terminal command you output MUST end with \`{{CLIP_CMD}}\`. If it is a multi-line script, ensure the final output is piped to the clipboard so I see the result.
+- **ONE COMMAND AT A TIME:** You must NEVER dump multiple commands or scripts in a single message. Give one command, wait for me to paste the result.
+- **Edit Scripts Permitted:** You are allowed to write and execute terminal scripts to edit files programmatically (replacing code blocks). This is often safer and faster.
 - **If you are a Web Chat and need file contents, ask me to paste them BEFORE generating the prompt.**
 - **Unicode Safety:** When reading files that may contain Persian/Arabic text, ALWAYS use UTF-8 encoding flags in commands to prevent the clipboard from mangling the characters into "?". (e.g., \`-Encoding UTF8\`).
-
 ## STEP 4: PROJECT CONTEXT & TASK SELECTION
 Once the mode is set, you need the project context. 
 Ask me to run this exact command and paste the output:
