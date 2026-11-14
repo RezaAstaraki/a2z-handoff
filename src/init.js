@@ -1,168 +1,127 @@
-import { createInterface } from "node:readline/promises";
-import { stdin as input, stdout as output, platform } from "node:process";
-import { mkdir, writeFile, access, readFile } from "node:fs/promises";
-import { execSync } from "node:child_process";
+import { mkdir, writeFile, copyFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { parseArgs } from "node:util";
 import path from "node:path";
-import {
-  LEADER_TEMPLATE,
-  WORKER_TEMPLATE,
-  AGENTS_POINTER,
-  PROJECT_TEMPLATE,
-  NOTES_TEMPLATE,
-  HANDOFF_TEMPLATE,
-  CHAT_CONTEXT_TEMPLATE
-} from "./templates.js";
+import { LEADER_TEMPLATE, WORKER_TEMPLATE, AGENTS_POINTER, PROJECT_TEMPLATE, NOTES_TEMPLATE, HANDOFF_TEMPLATE } from "./templates.js";
+import { memoryPaths, readOptional, projectValue, displayPath, exists } from "./memory.js";
+import { withTerminal } from "./terminal.js";
+import { copyToClipboard } from "./clipboard.js";
+import { runChat } from "./chat.js";
 
-export async function runInit(args = []) {
-  const cwd = process.cwd();
-  const isDryRun = args.includes("--dry-run") || args.includes("-d");
-
-  let defaultName = "my-project";
-  let defaultStack = "Unknown";
-  let defaultVerify = "npm test";
-
+async function createIfMissing(file, content) {
   try {
-    const pkgContent = await readFile(path.join(cwd, "package.json"), "utf8");
-    const pkg = JSON.parse(pkgContent);
-    if (pkg.name) defaultName = pkg.name;
-    const deps = { ...pkg.dependencies, ...pkg.devDependencies };
-    if (deps.next) { defaultStack = "Next.js"; defaultVerify = "npx tsc --noEmit"; }
-    else if (deps.react) { defaultStack = "React"; defaultVerify = "npx tsc --noEmit"; }
-    else if (deps.typescript) { defaultStack = "TypeScript"; defaultVerify = "npx tsc --noEmit"; }
-    else if (deps.express) { defaultStack = "Express"; }
-  } catch {
-    try {
-      await access(path.join(cwd, "pyvenv.cfg"));
-      defaultStack = "Python";
-      defaultVerify = "python -m compileall .";
-    } catch {}
+    await writeFile(file, content, { encoding: "utf8", flag: "wx" });
+    console.log(`  Created ${displayPath(file)}`);
+  } catch (error) {
+    if (error.code !== "EEXIST") throw error;
+    console.log(`  Preserved ${displayPath(file)}`);
   }
+}
 
-  let osName = "Windows PowerShell";
-  let shellType = "powershell";
-  let clipCmd = "| Set-Clipboard";
-  let contextCmd = "Get-Content .leader/PROJECT.md, .leader/NOTES.md -Encoding UTF8 | Set-Clipboard";
-
-  if (platform === "darwin") {
-    osName = "macOS"; shellType = "bash"; clipCmd = "| pbcopy"; contextCmd = "cat .leader/PROJECT.md .leader/NOTES.md | pbcopy";
-  } else if (platform === "linux") {
-    osName = "Linux / Termux"; shellType = "bash"; clipCmd = "| termux-clipboard-set"; contextCmd = "cat .leader/PROJECT.md .leader/NOTES.md | termux-clipboard-set";
+async function saveBoot(file, content, refresh) {
+  const previous = await readOptional(file);
+  if (!refresh || previous === null) return createIfMissing(file, content);
+  if (previous === content) {
+    console.log(`  Already current: ${displayPath(file)}`);
+    return;
   }
+  const backup = `${file}.backup-${new Date().toISOString().replace(/[:.]/g, "-")}`;
+  await copyFile(file, backup, constants.COPYFILE_EXCL);
+  await writeFile(file, content, "utf8");
+  console.log(`  Refreshed ${displayPath(file)}; backup: ${displayPath(backup)}`);
+}
 
-  let templateToFill = LEADER_TEMPLATE;
+export async function runInit(args = [], session) {
+  const { values } = parseArgs({ args, options: {
+    "dry-run": { type: "boolean", short: "d" },
+    "refresh-boot": { type: "boolean" },
+    print: { type: "boolean" }, help: { type: "boolean", short: "h" }
+  } });
+  if (values.help) {
+    console.log(`Usage: a2z-handoff init [--dry-run | --refresh-boot] [--print]
 
-  if (isDryRun) {
-    // Replace Step 4 with a direct task prompt for Dry Run
-    templateToFill = templateToFill.replace(
-      /## STEP 4: PROJECT CONTEXT & TASK SELECTION[\s\S]*?(?=## STEP 5:)/,
-      `## STEP 4: PROJECT CONTEXT & TASK SELECTION\n**Dry Run Mode:** Context files do not exist yet. Do not ask for them.\nJust say: "What is the first task you would like to start?"\n\n`
-    );
+Create memory/PROJECT.md, memory/main/, memory/worker/, and an AGENTS.md pointer.
+Preserve existing memory. Import legacy project notes without removing .leader/.
+Then save and copy the main web AI startup context.
+--dry-run  Preview/copy a main AI boot prompt without creating files.
+--refresh-boot  Back up and regenerate only BOOT.md instructions using current templates.
+                Existing project context, notes, and worker handoff stay intact.
+--print    Print the context instead of copying it to the clipboard.`);
+    return;
   }
-
-  const fill = (tpl) => tpl
-    .replaceAll("{{PROJECT_NAME}}", defaultName)
-    .replaceAll("{{STACK}}", defaultStack)
-    .replaceAll("{{VERIFY_COMMAND}}", defaultVerify)
-    .replaceAll("{{PROJECT_PATH}}", cwd)
-    .replaceAll("{{OS_NAME}}", osName)
-    .replaceAll("{{SHELL_TYPE}}", shellType)
-    .replaceAll("{{CLIP_CMD}}", clipCmd)
-    .replaceAll("{{CONTEXT_CMD}}", contextCmd);
-
-  if (isDryRun) {
-    const leaderContent = fill(templateToFill);
-    try {
-      if (platform === "win32") execSync("clip", { input: leaderContent });
-      else if (platform === "darwin") execSync("pbcopy", { input: leaderContent });
-      else if (platform === "linux") {
-        try { execSync("termux-clipboard-set", { input: leaderContent }); }
-        catch { execSync("xclip -selection clipboard", { input: leaderContent }); }
-      }
-      console.log("Dry run: Copied LEADER.md to clipboard (Context files skipped). No files were written.");
-    } catch (e) {
-      console.error("Dry run: Could not copy to clipboard.", e.message);
-    }
+  if (values["dry-run"] && values["refresh-boot"]) {
+    throw new Error("Choose --dry-run or --refresh-boot, not both.");
+  }
+  const paths = memoryPaths();
+  const legacy = memoryPaths(paths.cwd, true);
+  const packageText = await readOptional(path.join(paths.cwd, "package.json"));
+  const pkg = packageText === null ? {} : JSON.parse(packageText);
+  const dependencies = { ...pkg.dependencies, ...pkg.devDependencies };
+  let stack = dependencies.next ? "Next.js" : dependencies.react ? "React" : dependencies.typescript ? "TypeScript" : dependencies.express ? "Express" : "Node.js / JavaScript";
+  let verify = dependencies.typescript ? "npx tsc --noEmit" : pkg.scripts?.lint ? "npm run lint" : "npm test";
+  if (packageText === null && (await exists(path.join(paths.cwd, "pyvenv.cfg")) || await exists(path.join(paths.cwd, "pyproject.toml")))) {
+    stack = "Python";
+    verify = "python -m compileall .";
+  }
+  const existingProject = await readOptional(paths.project);
+  const legacyProject = await readOptional(legacy.project);
+  const savedProject = existingProject ?? legacyProject;
+  const shell = process.platform === "win32" ? "PowerShell" : "bash";
+  let projectName = projectValue(savedProject, "Project") || pkg.name || path.basename(paths.cwd);
+  stack = projectValue(savedProject, "Stack") || stack;
+  verify = projectValue(savedProject, "Verification") || verify;
+  const fill = (template) => {
+    const fields = {
+      PROJECT_NAME: projectName, PROJECT_PATH: paths.cwd, STACK: stack,
+      OS_NAME: process.platform === "win32" ? "Windows" : process.platform === "darwin" ? "macOS" : process.platform,
+      SHELL_TYPE: projectValue(savedProject, "Shell") || shell, VERIFY_COMMAND: verify
+    };
+    return template.replace(/{{([A-Z_]+)}}/g, (match, key) => fields[key] ?? match);
+  };
+  if (values["dry-run"]) {
+    const boot = fill(LEADER_TEMPLATE)
+      + "\n=== Project context preview ===\n" + (savedProject ?? fill(PROJECT_TEMPLATE))
+      + "\nPreview only: local memory may not exist yet. Ask the human for missing context.\n";
+    if (values.print || !copyToClipboard(boot)) console.log(boot);
+    else console.log("Main AI boot prompt copied. Paste it into your web chat and choose Supervisor or Coder. No files created.");
     return;
   }
 
-  const rl = createInterface({ input, output });
-
-  try {
-    console.log("Initializing a2z-handoff for this project...\n");
-    
-    const nameInput = await rl.question(`Project name [${defaultName}]: `);
-    const projectName = nameInput.trim() || defaultName;
-
-    const stackInput = await rl.question(`Stack [${defaultStack}]: `);
-    const stack = stackInput.trim() || defaultStack;
-
-    const verifyInput = await rl.question(`Verification command [${defaultVerify}]: `);
-    const verifyCommand = verifyInput.trim() || defaultVerify;
-
-    const leaderDir = path.join(cwd, ".leader");
-    await mkdir(leaderDir, { recursive: true });
-
-    const fillQuestions = (tpl) => tpl
-      .replaceAll("{{PROJECT_NAME}}", projectName)
-      .replaceAll("{{STACK}}", stack)
-      .replaceAll("{{VERIFY_COMMAND}}", verifyCommand)
-      .replaceAll("{{PROJECT_PATH}}", cwd)
-      .replaceAll("{{OS_NAME}}", osName)
-      .replaceAll("{{SHELL_TYPE}}", shellType)
-      .replaceAll("{{CLIP_CMD}}", clipCmd)
-      .replaceAll("{{CONTEXT_CMD}}", contextCmd);
-
-    // 1. Create .leader files
-    const leaderContent = fillQuestions(LEADER_TEMPLATE);
-    await writeFile(path.join(leaderDir, "LEADER.md"), leaderContent, "utf8");
-    await writeFile(path.join(leaderDir, "WORKER.md"), fillQuestions(WORKER_TEMPLATE), "utf8");
-    await writeFile(path.join(leaderDir, "PROJECT.md"), fillQuestions(PROJECT_TEMPLATE), "utf8");
-    await writeFile(path.join(leaderDir, "CHAT_CONTEXT.md"), fillQuestions(CHAT_CONTEXT_TEMPLATE), "utf8");
-    
-    const notesPath = path.join(leaderDir, "NOTES.md");
-    try { await access(notesPath); } catch { await writeFile(notesPath, fillQuestions(NOTES_TEMPLATE), "utf8"); }
-    
-    const handoffPath = path.join(leaderDir, "HANDOFF.md");
-    try { await access(handoffPath); } catch { await writeFile(handoffPath, fillQuestions(HANDOFF_TEMPLATE), "utf8"); }
-
-    // 2. Auto-copy LEADER.md to clipboard
-    try {
-      if (platform === "win32") execSync("clip", { input: leaderContent });
-      else if (platform === "darwin") execSync("pbcopy", { input: leaderContent });
-      else if (platform === "linux") {
-        try { execSync("termux-clipboard-set", { input: leaderContent }); }
-        catch { execSync("xclip -selection clipboard", { input: leaderContent }); }
-      }
-      console.log("  - Copied .leader/LEADER.md to clipboard!");
-    } catch (e) {
-      console.log("  - Could not auto-copy LEADER.md to clipboard.");
+  const initialize = async (terminal) => {
+    if (savedProject === null) {
+      console.log("\nSet up project memory. Discuss the actual task later in your web AI chat.");
+      projectName = await terminal.text("Project name", { defaultValue: projectName, required: true });
+      stack = await terminal.text("Stack", { defaultValue: stack, required: true });
+      verify = await terminal.text("Default verification command", { defaultValue: verify, required: true });
+    } else {
+      console.log("\nPreserving existing project context and memory.");
     }
+    await mkdir(paths.main, { recursive: true });
+    await mkdir(paths.worker, { recursive: true });
+    await createIfMissing(paths.project, savedProject ?? fill(PROJECT_TEMPLATE));
+    await saveBoot(paths.mainBoot, fill(LEADER_TEMPLATE), values["refresh-boot"]);
+    await saveBoot(paths.workerBoot, fill(WORKER_TEMPLATE), values["refresh-boot"]);
+    await createIfMissing(paths.notes, await readOptional(legacy.notes) ?? NOTES_TEMPLATE);
+    await createIfMissing(paths.handoff, await readOptional(legacy.handoff) ?? HANDOFF_TEMPLATE);
+    const legacyTask = await readOptional(legacy.task);
+    // Import pending state once; rerunning init must not revive accepted work.
+    if (existingProject === null && legacyTask?.trim()) await createIfMissing(paths.task, legacyTask);
 
-    // 3. Safe Append to AGENTS.md
-    const agentsPath = path.join(cwd, "AGENTS.md");
-    try {
-      await access(agentsPath);
-      const content = await readFile(agentsPath, "utf8");
-      if (!content.includes("A2Z Handoff Protocol")) {
-        await writeFile(agentsPath, "\n\n" + AGENTS_POINTER, { flag: "a" });
-        console.log("  - Appended A2Z pointer to AGENTS.md");
-      }
-    } catch {
-      await writeFile(agentsPath, AGENTS_POINTER, "utf8");
-      console.log("  - Created AGENTS.md");
+    const agentsPath = path.join(paths.cwd, "AGENTS.md");
+    const agents = await readOptional(agentsPath);
+    const oldRule = 'If your prompt starts with "CHANGE: ", you MUST read and follow the rules in `.leader/WORKER.md` before acting.';
+    if (agents === null) await createIfMissing(agentsPath, AGENTS_POINTER);
+    else if (agents.includes(oldRule)) {
+      await writeFile(agentsPath, agents.replace(oldRule,
+        'For a task starting with "CHANGE:", read memory/worker/BOOT.md and follow the agreed scope.'), "utf8");
+      console.log("  Updated the legacy A2Z pointer in AGENTS.md");
+    } else if (!agents.includes("A2Z Handoff Protocol")) {
+      await writeFile(agentsPath, `\n${AGENTS_POINTER}`, { flag: "a", encoding: "utf8" });
+      console.log("  Appended the A2Z pointer to AGENTS.md");
     }
-
-    // 4. Safe .gitignore
-    const gitignorePath = path.join(cwd, ".gitignore");
-    let gitContent = "";
-    try { gitContent = await readFile(gitignorePath, "utf8"); } catch {}
-    if (!gitContent.includes(".leader/LEADER.md")) {
-      await writeFile(gitignorePath, gitContent + "\n# A2Z Handoff\n.leader/LEADER.md\n", "utf8");
-      console.log("  - Added .leader/LEADER.md to .gitignore");
-    }
-
-    console.log("\nSuccess! Initialized a2z-handoff.");
-  } finally {
-    rl.close();
-  }
+    console.log("\nProject memory is ready.");
+    await runChat(values.print ? ["--print"] : []);
+  };
+  if (savedProject !== null) await initialize(session);
+  else await withTerminal(initialize, session);
 }

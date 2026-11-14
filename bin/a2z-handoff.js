@@ -3,78 +3,69 @@
 import process from "node:process";
 import { createRequire } from "node:module";
 import { runInit } from "../src/init.js";
+import { runChat } from "../src/chat.js";
 import { runPrompt } from "../src/prompt.js";
 import { runLog } from "../src/log.js";
 import { runAccept } from "../src/accept.js";
+import { runInteractive } from "../src/interactive.js";
 
 const require = createRequire(import.meta.url);
 const pkg = require("../package.json");
-
 const args = process.argv.slice(2);
 
 function printHelp() {
   console.log(`
-a2z-handoff - A model-agnostic handoff protocol and CLI for AI agents.
+a2z-handoff — Project memory for a web AI Supervisor or Coder.
 
 Usage:
+  a2z-handoff                     Open the guided startup menu
   a2z-handoff <command> [options]
 
 Commands:
-  init      Scaffold context files (use --dry-run to just copy LEADER.md)
-  prompt    Generate a strict, level-based prompt
-  accept    Verify and log success (--human, --auto, or default both)
-  log       Manually append a calibration row
+  init         Set up memory and prepare your main web AI chat
+  chat         Save/copy startup context; choose the AI's role in the web chat
+  prompt       Alias for chat; --task creates an optional agreed-task skeleton
+  accept       Check work already completed by the coder or harness
+  log          Record the human's scope assessment in main AI memory
+  interactive  Open the startup menu explicitly
 
 Options:
-  -v, --version   Show version number
-  -h, --help      Show this help message
-  `);
+  -v, --version  Show the package version
+  -h, --help     Show help
+
+First run: a2z-handoff init
+Resume:    a2z-handoff chat
+Paste the prepared context into your web AI, then choose Supervisor or Coder.
+Discuss and agree on a task there before generating edits or harness prompts.
+Use '<command> --help' for details.
+`);
 }
 
-if (args.length === 0 || args[0] === "-h" || args[0] === "--help") {
-  printHelp();
-  process.exit(0);
-}
-
-if (args[0] === "-v" || args[0] === "--version") {
-  console.log(pkg.version);
-  process.exit(0);
-}
-
-if (args[0] === "init") {
-  if (args.includes("-h") || args.includes("--help")) {
-    console.log(`
-Usage: a2z-handoff init [options]
-
-Scaffold the .leader/ directory and worker instructions.
-Safely appends to existing AGENTS.md and does not overwrite HANDOFF.md.
-
-Options:
-  -d, --dry-run   Copy LEADER.md to clipboard without writing any files.
-    `);
-    process.exit(0);
+async function main() {
+  if (args.length === 0) {
+    if (process.stdin.isTTY && process.stdout.isTTY) await runInteractive();
+    else printHelp();
+    return;
   }
-  runInit(args.slice(1)).catch(console.error);
-} else if (args[0] === "prompt") {
-  runPrompt(args.slice(1));
-} else if (args[0] === "accept") {
-  if (args.includes("-h") || args.includes("--help")) {
-    console.log(`
-Usage: a2z-handoff accept [options]
-
-Runs the verification command, asks for human confirmation, 
-and logs the result to .leader/NOTES.md.
-
-Options:
-  --auto    Run automated verification only.
-  --human   Skip automated verification, ask human only.
-    `);
-    process.exit(0);
+  if (["-h", "--help"].includes(args[0])) return printHelp();
+  if (["-v", "--version"].includes(args[0])) {
+    console.log(pkg.version);
+    return;
   }
-  runAccept(args.slice(1)).catch(console.error);
-} else if (args[0] === "log") {
-  runLog(args.slice(1)).catch(console.error);
-} else {
-  console.log(`[a2z-handoff] Command "${args[0]}" is not implemented yet.`);
-  console.log(`Run 'a2z-handoff --help' for usage.`);
+  const commands = { init: runInit, chat: runChat, prompt: runPrompt, accept: runAccept, log: runLog };
+  if (args[0] === "interactive") {
+    if (args.length === 2 && ["-h", "--help"].includes(args[1])) return printHelp();
+    if (args.length > 1) throw new Error("interactive takes no options. Use 'a2z-handoff --help'.");
+    return runInteractive();
+  }
+  if (!Object.hasOwn(commands, args[0])) throw new Error(`Unknown command "${args[0]}". Run 'a2z-handoff --help'.`);
+  await commands[args[0]](args.slice(1));
 }
+
+main().catch((error) => {
+  if (error.code === "CANCELLED") console.log(`\n${error.message}`);
+  else {
+    console.error(`[a2z-handoff] ${error.message}`);
+    process.exitCode = 1;
+  }
+});

@@ -1,109 +1,83 @@
-import process from "node:process";
-import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
+import { parseArgs } from "node:util";
 import path from "node:path";
+import { resolveMemory, readOptional, projectValue, displayPath } from "./memory.js";
+import { runChat } from "./chat.js";
+import { WORKER_REPORT_RULES } from "./templates.js";
 
-export async function runPrompt(args) {
-  if (args.includes("-h") || args.includes("--help")) {
-    console.log(`
-Usage: a2z-handoff prompt [options]
+export async function runPrompt(args = []) {
+  if (args.length === 0) return runChat();
+  const { values } = parseArgs({ args, options: {
+    task: { type: "string", short: "t" }, level: { type: "string", short: "l", default: "3" },
+    files: { type: "string", short: "f" }, verify: { type: "string", short: "v" },
+    chat: { type: "boolean" }, help: { type: "boolean", short: "h" }
+  } });
+  if (values.help) {
+    console.log(`Usage: a2z-handoff prompt
+       a2z-handoff prompt --task <agreed task> [--level 0-10] [--files a,b] [--verify command] [--chat]
 
-Generate a strict, level-based prompt skeleton for a Worker.
-
-Options:
-  -t, --task <text>     The task description (Required)
-  -l, --level <number>  The autonomy level (0-10) (Default: 3)
-  -f, --files <list>    Comma-separated list of files to edit
-  -v, --verify <cmd>    The terminal verification command (Default: npm test)
-  --chat                Include file contents for Web Chat Workers
-
-Example:
-  a2z-handoff prompt --task "Add login" --files "src/auth.js" --level 4
-    `);
-    process.exit(0);
+Without options: save/copy context for the main web AI conversation.
+With --task: save an optional worker-prompt skeleton for an already agreed task.
+The Supervisor must complete its edit instructions before the worker uses it.
+--chat includes worker rules, project memory, handoff, and selected file contents.
+The verification command defaults to the project memory setting.`);
+    return;
   }
-
-  let level = "3";
-  let task = "";
-  let files = [];
-  let verifyCmd = "npm test";
-  let isChat = false;
-
-  for (let i = 0; i < args.length; i++) {
-    if (args[i] === "--level" || args[i] === "-l") level = args[++i];
-    else if (args[i] === "--task" || args[i] === "-t") task = args[++i];
-    else if (args[i] === "--files" || args[i] === "-f") files = args[++i].split(",").map(f => f.trim());
-    else if (args[i] === "--verify" || args[i] === "-v") verifyCmd = args[++i];
-    else if (args[i] === "--chat") isChat = true;
-  }
-
-  if (!task) {
-    console.error("Error: --task is required. Run 'a2z-handoff prompt --help' for usage.");
-    process.exit(1);
-  }
-
-  // Save state for the 'accept' command
-  const leaderDir = path.join(process.cwd(), ".leader");
-  await mkdir(leaderDir, { recursive: true });
-  await writeFile(
-    path.join(leaderDir, ".last-task.json"),
-    JSON.stringify({ task, level, verifyCmd }, null, 2),
-    "utf8"
-  );
-
-  let contextBlock = "";
-  let readFirstBlock = "AGENTS.md, HANDOFF.md, then the target file(s).";
-
-  if (isChat) {
-    try {
-      const chatContext = await readFile(path.join(process.cwd(), "CHAT_CONTEXT.md"), "utf8");
-      contextBlock += `\n=== START CONTEXT (CHAT_CONTEXT.md) ===\n${chatContext}\n=== END CONTEXT ===\n`;
-      for (const file of files) {
-        if (!file) continue;
-        const content = await readFile(path.join(process.cwd(), file), "utf8");
-        contextBlock += `\n=== START FILE: ${file} ===\n${content}\n=== END FILE: ${file} ===\n`;
-      }
-      readFirstBlock = "The context and files are provided below. Read them carefully.";
-    } catch (err) {
-      console.error(`Error reading chat context or files: ${err.message}`);
-      process.exit(1);
-    }
-  } else {
-    if (files.length > 0) {
-      contextBlock = `\nFILE(S):\n${files.map(f => `- ${f}`).join("\n")}\n`;
+  if (!values.task?.trim()) throw new Error("Use 'a2z-handoff chat' to agree on a task, or provide --task for a skeleton.");
+  if (!/^(?:[0-9]|10)$/.test(values.level)) throw new Error("--level must be a whole number from 0 to 10.");
+  const paths = await resolveMemory();
+  const project = await readOptional(paths.project);
+  if (project === null) throw new Error("Run 'a2z-handoff init' to set up memory first.");
+  const verify = values.verify?.trim() || projectValue(project, "Verification") || "npm test";
+  const files = (values.files || "").split(",").map((file) => file.trim()).filter(Boolean);
+  const writable = [...new Set([...files, displayPath(paths.handoff)])];
+  let context = `FILE(S) — writable:\n${files.length ? "" : "- <Supervisor: specify the agreed source targets>\n"}${writable.map((file) => `- ${file}`).join("\n")}\n`;
+  if (values.chat) {
+    for (const file of [path.join(paths.cwd, "AGENTS.md"), paths.workerBoot, paths.project, paths.handoff,
+      ...files.map((file) => path.resolve(paths.cwd, file))]) {
+      const content = await readOptional(file);
+      if (content === null) throw new Error(`Missing context file: ${file}`);
+      context += `\n=== ${displayPath(file)} ===\n${content}\n`;
     }
   }
+  const shell = projectValue(project, "Shell") || (process.platform === "win32" ? "PowerShell" : "bash");
+  const exitInstruction = /powershell/i.test(shell)
+    ? `Run: ${verify}\nThen report: $LASTEXITCODE`
+    : `Run: ${verify}\nThen report: $?`;
+  const prompt = `CHANGE: ${values.task.trim()}
+LEVEL: ${values.level}
+${context}
+READ FIRST: AGENTS.md, ${displayPath(paths.workerBoot)}, ${displayPath(paths.project)}, ${displayPath(paths.handoff)}, and target files.
 
-  const promptText = `\`\`\`text
-CHANGE: ${task}
-LEVEL: ${level}
-REASONING BUDGET: at most ${level <= 2 ? 3 : level <= 5 ? 8 : 12} reasoning lines total, then tool calls.
-${contextBlock}
-READ FIRST: ${readFirstBlock}
+PREFLIGHT:
+Confirm current paths, anchors, dependencies, and writable scope before editing.
+If these instructions conflict or the allowed files cannot satisfy acceptance,
+return a BLOCKED report. Keep any approach summary to at most 5 lines.
 
 EXACT EDITS:
-(Leader: Fill in the exact diff or anchor instructions here)
+<Supervisor: supply the agreed replacements or named anchors.>
 
 PRESERVE:
-(List byte-identical elements)
+<Supervisor: specify what must stay unchanged.>
 
 DO NOT:
-- Do not run npm run dev/build/start, or git commands.
+- Expand the agreed task, stage files, commit, or push.
+- Disconnect required functionality to silence a check.
+- Add task lessons to BOOT files or rewrite main AI notes.
+- Create extra approach/report files outside the agreed writable scope.
 
 CHECK:
-1. Run \`${verifyCmd}; Write-Output "EXIT=$LASTEXITCODE"\` and report the exit code.
-2. Read back and quote the modified regions.
-3. Grep for new identifiers.
+${exitInstruction}
+Record each attempt against baseline/intermediate/final source. PASS requires the
+complete command to exit 0. Record FAIL / BLOCKED / NOT RUN accurately; static
+checks do not establish untested runtime behavior. Follow the agreed stop conditions.
 
-REPORT (wrap entire report in a single fenced block):
-- LEVEL: ${level} | LEVEL HIT: <yes|overshoot|undershoot> | REASON: <one line>
-- Files changed.
-- Exit code.
-- Quoted regions.
-\`\`\``;
-
-  console.log("\n=======================================================");
-  console.log(" COPY THIS PROMPT TO YOUR WORKER (DSH / ChatGPT / etc.)");
-  console.log("=======================================================\n");
-  console.log(promptText);
-  console.log("\n=======================================================");
+Update ${displayPath(paths.handoff)} with the execution result.
+${WORKER_REPORT_RULES}
+`;
+  await writeFile(paths.prompt, prompt, "utf8");
+  await writeFile(paths.task, JSON.stringify({ task: values.task.trim(), level: values.level, verifyCmd: verify }, null, 2), "utf8");
+  console.log(prompt);
+  console.log(`\nSkeleton saved: ${displayPath(paths.prompt)}`);
+  console.log("Have the Supervisor fill its edit instructions before handing it to the worker. Prompt generation does not mean the work is complete.");
 }

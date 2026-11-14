@@ -1,65 +1,44 @@
 import { readFile, writeFile } from "node:fs/promises";
-import path from "node:path";
+import { parseArgs } from "node:util";
+import { resolveMemory, displayPath } from "./memory.js";
 
-export async function runLog(args) {
-  let change = "";
-  let level = "3";
-  let hit = "yes";
-  let notes = "";
+function escapeCell(value) {
+  return String(value).replaceAll("|", "\\|").replace(/\r\n|\r|\n/g, "<br>");
+}
 
-  if (args.includes("-h") || args.includes("--help")) {
-    console.log(`
-Usage: a2z-handoff log [options]
-
-Log a Worker run to your .leader/NOTES.md calibration table.
-
-Options:
-  -c, --change <text>   The name of the task (Required)
-  -l, --level <number>  The autonomy level (0-10) (Default: 3)
-  --hit <status>        yes, overshoot, or undershoot (Default: yes)
-  -n, --notes <text>    Any extra context or errors (Optional)
-
-Example:
-  a2z-handoff log --change "Add login UI" --level 4 --hit yes --notes "Clean pass"
-    `);
-    process.exit(0);
+export async function appendLog(paths, { change, level, hit, notes = "" }) {
+  const content = await readFile(paths.notes, "utf8");
+  const newline = content.includes("\r\n") ? "\r\n" : "\n";
+  const lines = content.split(/\r?\n/);
+  const header = lines.findIndex((line) => /^\|\s*Run\s*\|\s*Change\s*\|\s*Level\s*\|\s*Level Hit\s*\|\s*Notes\s*\|\s*$/i.test(line));
+  if (header === -1 || !lines[header + 1]?.trim().startsWith("|")) {
+    throw new Error(`No calibration table found in ${displayPath(paths.notes)}. Preserve your notes and add the documented five-column table.`);
   }
+  let end = header + 2;
+  while (end < lines.length && lines[end].trim().startsWith("|")) end++;
+  const cells = [new Date().toISOString(), change, level, hit, notes].map(escapeCell);
+  lines.splice(end, 0, `| ${cells.join(" | ")} |`);
+  await writeFile(paths.notes, lines.join(newline), "utf8");
+  console.log(`Recorded result in ${displayPath(paths.notes)}.`);
+}
 
-  for (let i = 0; i < args.length; i++) {
-    if (args[i] === "--change" || args[i] === "-c") change = args[++i];
-    else if (args[i] === "--level" || args[i] === "-l") level = args[++i];
-    else if (args[i] === "--hit") hit = args[++i];
-    else if (args[i] === "--notes" || args[i] === "-n") notes = args[++i];
+export async function runLog(args = []) {
+  const { values } = parseArgs({ args, options: {
+    change: { type: "string", short: "c" }, level: { type: "string", short: "l", default: "3" },
+    hit: { type: "string", default: "yes" }, notes: { type: "string", short: "n", default: "" },
+    help: { type: "boolean", short: "h" }
+  } });
+  if (values.help) {
+    console.log(`Usage: a2z-handoff log --change <task> [--level 0-10] [--hit yes|overshoot|undershoot] [--notes text]
+
+Append a human-assessed scope result to memory/main/NOTES.md.
+Legacy .leader/NOTES.md is supported. "Level Hit" describes scope, not test success.`);
+    return;
   }
-
-  if (!change) {
-    console.error("Error: --change is required. Run 'a2z-handoff log --help' for usage.");
-    process.exit(1);
-  }
-
-  const cwd = process.cwd();
-  const notesPath = path.join(cwd, ".leader", "NOTES.md");
-
-  try {
-    const content = await readFile(notesPath, "utf8");
-    const lines = content.split("\n");
-    
-    let lastTableIndex = -1;
-    for (let i = 0; i < lines.length; i++) {
-      if (lines[i].trim().startsWith("|")) {
-        lastTableIndex = i;
-      }
-    }
-
-    if (lastTableIndex !== -1) {
-      const row = `| ${change} | ${level} | ${hit} | ${notes} |`;
-      lines.splice(lastTableIndex + 1, 0, row);
-      await writeFile(notesPath, lines.join("\n"), "utf8");
-      console.log(`\nSuccess! Logged to .leader/NOTES.md:\n${row}\n`);
-    } else {
-      console.error("Error: Could not find a markdown table in .leader/NOTES.md");
-    }
-  } catch (err) {
-    console.error("Error: Could not read .leader/NOTES.md. Did you run 'a2z-handoff init' first?");
-  }
+  if (!values.change?.trim()) throw new Error("--change is required.");
+  if (!/^(?:[0-9]|10)$/.test(values.level)) throw new Error("--level must be a whole number from 0 to 10.");
+  if (!["yes", "overshoot", "undershoot"].includes(values.hit)) throw new Error("--hit must be yes, overshoot, or undershoot.");
+  await appendLog(await resolveMemory(), {
+    change: values.change.trim(), level: values.level, hit: values.hit, notes: values.notes
+  });
 }

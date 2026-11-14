@@ -1,7 +1,7 @@
 {
   "name": "a2z-handoff",
   "version": "1.0.4",
-  "description": "A model-agnostic handoff protocol and CLI for orchestrating AI coding agents.",
+  "description": "Project memory and handoff workflows for web AI supervisors, coders, and coding harnesses.",
   "type": "module",
   "bin": {
     "a2z-handoff": "bin/a2z-handoff.js"

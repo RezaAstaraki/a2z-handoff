@@ -1,86 +1,80 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { unlink } from "node:fs/promises";
 import { execSync } from "node:child_process";
-import path from "node:path";
-import process from "node:process";
-import { createInterface } from "node:readline/promises";
-import { stdin as input, stdout as output } from "node:process";
+import { parseArgs } from "node:util";
+import { resolveMemory, readOptional, projectValue, displayPath } from "./memory.js";
+import { withTerminal } from "./terminal.js";
+import { appendLog } from "./log.js";
 
-export async function runAccept(args) {
-  let mode = "both";
-  if (args.includes("--human")) mode = "human";
-  else if (args.includes("--auto")) mode = "auto";
+export async function runAccept(args = [], session) {
+  const { values } = parseArgs({ args, options: {
+    auto: { type: "boolean" }, human: { type: "boolean" },
+    task: { type: "string" }, level: { type: "string" }, verify: { type: "string" },
+    help: { type: "boolean", short: "h" }
+  } });
+  if (values.help) {
+    console.log(`Usage: a2z-handoff accept [--auto | --human] [--task text] [--level 0-10] [--verify command]
 
-  const cwd = process.cwd();
-  const taskFile = path.join(cwd, ".leader", ".last-task.json");
-  let taskData;
-
-  try {
-    taskData = JSON.parse(await readFile(taskFile, "utf8"));
-  } catch {
-    // Fallback: The CLI didn't generate the prompt, so we ask the user manually.
-    console.log("\n[!] No pending task found in .leader/.last-task.json.");
-    console.log("This usually happens if you generated the prompt using a Web Chat instead of 'a2z-handoff prompt'.\n");
-    
-    const rl = createInterface({ input, output });
-    const task = await rl.question("What is the task name? (e.g., 'Gate Add Button'): ");
-    const verifyCmd = await rl.question("What is the verification command? [npx tsc --noEmit]: ");
-    rl.close();
-    
-    taskData = {
-      task: task || "Unknown Task",
-      level: "2", // Default fallback
-      verifyCmd: verifyCmd || "npx tsc --noEmit"
-    };
+Use after the web AI's commands or harness task have been completed.
+Default: run the verification command, then ask for human confirmation.
+--auto   Run the agreed automated check only.
+--human  Ask for human confirmation only; run no verification command.
+Provide the task agreed in your chat, or answer the questions interactively.
+An optional recorded task from 'prompt --task' is also supported.
+Acceptance records a result and does not commit any files.`);
+    return;
   }
+  if (values.auto && values.human) throw new Error("Choose --auto or --human, or omit both for both checks.");
+  if (values.level !== undefined && !/^(?:[0-9]|10)$/.test(values.level)) throw new Error("--level must be a whole number from 0 to 10.");
+  if (values.task !== undefined && !values.task.trim()) throw new Error("--task must not be empty.");
+  const paths = await resolveMemory();
+  const project = await readOptional(paths.project);
+  if (project === null) throw new Error("Run 'a2z-handoff init' first.");
+  const savedText = await readOptional(paths.task);
+  let saved = null;
+  if (savedText?.trim()) {
+    try {
+      saved = JSON.parse(savedText);
+      if (!saved || typeof saved.task !== "string" || !saved.task.trim()
+        || !/^(?:[0-9]|10)$/.test(String(saved.level))
+        || typeof saved.verifyCmd !== "string" || !saved.verifyCmd.trim()) throw new Error("Invalid fields");
+    } catch {
+      throw new Error(`Invalid saved task in ${displayPath(paths.task)}. Repair or remove it before acceptance.`);
+    }
+  }
+  const task = values.task?.trim() || saved?.task;
+  const matchingSaved = saved && saved.task === task ? saved : null;
+  const level = values.level ?? (matchingSaved ? String(matchingSaved.level) : undefined);
+  const verify = values.verify?.trim() || matchingSaved?.verifyCmd || projectValue(project, "Verification");
 
-  try {
-    console.log(`\nAccepting Task: "${taskData.task}" (Level ${taskData.level})`);
-    
-    // 1. Automated Verification
-    if (mode === "auto" || mode === "both") {
-      console.log(`\nRunning automated verification: ${taskData.verifyCmd}...`);
+  const accept = async (terminal) => {
+    const taskName = task || await terminal.text("Task agreed with your web AI", { required: true });
+    const taskLevel = level || await terminal.text("Agreed autonomy level", {
+      defaultValue: "3", validate: (value) => /^(?:[0-9]|10)$/.test(value) ? "" : "Enter a whole number from 0 to 10."
+    });
+    const command = values.human ? "" : verify || await terminal.text("Agreed verification command", { required: true });
+    console.log(`\nChecking completed task: ${taskName} (Level ${taskLevel})`);
+    if (!values.human) {
+      console.log(`Running: ${command}`);
+      const run = () => execSync(command, { cwd: paths.cwd, stdio: "inherit" });
       try {
-        execSync(taskData.verifyCmd, { stdio: "inherit", cwd });
-        console.log("✅ Automated verification passed!");
-      } catch (e) {
-        console.error("❌ Automated verification failed. Fix the code before accepting.");
-        process.exit(1);
+        if (terminal) terminal.withTerminalReleased(run);
+        else run();
+      } catch {
+        throw new Error("Verification failed. Work was not accepted; saved task and notes were preserved.");
       }
     }
-
-    // 2. Human Verification
-    if (mode === "human" || mode === "both") {
-      const rl = createInterface({ input, output });
-      const answer = await rl.question("\nDid you manually verify this task? (y/N): ");
-      rl.close();
-      if (answer.toLowerCase() !== "y") {
-        console.error("❌ Task rejected by human.");
-        process.exit(1);
-      }
-      console.log("✅ Human verification confirmed!");
+    if (!values.auto && !await terminal.confirm("Have you reviewed the result and completed the agreed manual checks?")) {
+      throw new Error("Work was not accepted. Saved task and notes were preserved.");
     }
-
-    // 3. Log to NOTES.md
-    const notesPath = path.join(cwd, ".leader", "NOTES.md");
-    const content = await readFile(notesPath, "utf8");
-    const lines = content.split("\n");
-    let lastTableIndex = -1;
-    for (let i = 0; i < lines.length; i++) {
-      if (lines[i].trim().startsWith("|")) lastTableIndex = i;
+    const checks = values.auto ? "Automated check" : values.human ? "Human confirmation" : "Automated check and human confirmation";
+    await appendLog(paths, { change: taskName, level: taskLevel, hit: "unreviewed", notes: `Accepted: ${checks}. Scope assessment is recorded separately with log.` });
+    if (saved?.task === taskName) {
+      try { await unlink(paths.task); }
+      catch (error) { if (error.code !== "ENOENT") throw error; }
     }
-    
-    if (lastTableIndex !== -1) {
-      const verificationType = mode === "both" ? "Auto + Human" : mode === "auto" ? "Auto" : "Human";
-      const row = `| ${taskData.task} | ${taskData.level} | yes | Accepted (${verificationType}) |`;
-      lines.splice(lastTableIndex + 1, 0, row);
-      await writeFile(notesPath, lines.join("\n"), "utf8");
-      console.log(`\nLogged to .leader/NOTES.md:\n${row}\n`);
-    }
-    
-    // Cleanup the task file if it existed
-    try { await writeFile(taskFile, "", "utf8"); } catch {}
-    
-  } catch (err) {
-    console.error("Error logging task:", err.message);
-  }
+    console.log("Accepted. Return the verification result to your main web AI and save its memory checkpoint.");
+  };
+  const needsQuestions = !task || !level || (!values.human && !verify) || !values.auto;
+  if (needsQuestions || session) await withTerminal(accept, session);
+  else await accept(null);
 }
